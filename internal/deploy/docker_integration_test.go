@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"shipper/internal/auth"
@@ -399,7 +400,11 @@ func TestDockerStaticPipeline(t *testing.T) {
 	if _, e = runtime.Client.ContainerStart(ctx, dashboard.ID, client.ContainerStartOptions{}); e != nil {
 		t.Fatal(e)
 	}
-	runtime.dashboardRoute(config)
+	// Render the dashboard with an explicit ACME contact, then replace the
+	// resolver below with this test's trust anchor. The loopback proxy has no ACME.
+	dashboardRuntime := *runtime
+	dashboardRuntime.Config.ACMEEmail = "owner@example.test"
+	dashboardRuntime.dashboardRoute(config)
 	for _, v := range config["http"].(map[string]any)["routers"].(map[string]any) {
 		router := v.(map[string]any)
 		if router["tls"] != nil {
@@ -473,6 +478,9 @@ func TestDockerStaticPipeline(t *testing.T) {
 	}
 	if _, e = db.Application(ctx, app.ID); e == nil {
 		t.Fatal("deleted application still listed")
+	}
+	if _, e = runtime.Client.NetworkInspect(ctx, runtime.applicationNetwork(app.ID), client.NetworkInspectOptions{}); !errdefs.IsNotFound(e) {
+		t.Fatal("deleted application retained its unused private network", e)
 	}
 	if _, e = runtime.Client.ContainerInspect(ctx, sentinel.ID, client.ContainerInspectOptions{}); e != nil {
 		t.Fatal("application deletion touched an unrelated container", e)

@@ -135,6 +135,45 @@ func (r *DockerRuntime) ValidatePublishedPorts(ctx context.Context, application 
 }
 
 func (r *DockerRuntime) applicationNetwork(app string) string { return r.prefix() + "-app-" + app }
+
+func (r *DockerRuntime) removeApplicationNetwork(ctx context.Context, app string) error {
+	name := r.applicationNetwork(app)
+	info, err := r.Client.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
+	if errdefs.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !owned(info.Network.Labels, r.Instance, app) {
+		return errors.New("Application network ownership check failed")
+	}
+	if len(info.Network.Containers) > 0 {
+		proxy, err := r.Client.ContainerInspect(ctx, r.proxy(), client.ContainerInspectOptions{})
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !owned(proxy.Container.Config.Labels, r.Instance, "") || proxy.Container.Config.Labels["io.shipper.infrastructure"] != "proxy" {
+			return errors.New("Proxy ownership check failed")
+		}
+		// Other applications may still have a reviewed connection to this network.
+		// Their endpoints must survive deletion of the target application's runtime.
+		for id := range info.Network.Containers {
+			if id != proxy.Container.ID {
+				return nil
+			}
+		}
+		if _, err = r.Client.NetworkDisconnect(ctx, name, client.NetworkDisconnectOptions{Container: proxy.Container.ID}); err != nil {
+			return err
+		}
+	}
+	_, err = r.Client.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
+	return err
+}
+
 func (r *DockerRuntime) ensureApplicationNetwork(ctx context.Context, app string) error {
 	name := r.applicationNetwork(app)
 	info, err := r.Client.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
@@ -197,6 +236,19 @@ func publishedBindings(ports []store.PublishedPort) network.PortMap {
 	return bindings
 }
 
+// Engines predating implicit exposure require every published port in Config
+// as well as HostConfig. Declaring a port does not publish an unbound port.
+func exposedPorts(bindings network.PortMap) network.PortSet {
+	if len(bindings) == 0 {
+		return nil
+	}
+	ports := make(network.PortSet, len(bindings))
+	for port := range bindings {
+		ports[port] = struct{}{}
+	}
+	return ports
+}
+
 // PrepareNetworkCutover releases fixed host ports before replacement. The
 // deployment journal retains PreviousID so rollback can restart it after failure.
 func (r *DockerRuntime) PrepareNetworkCutover(ctx context.Context, d store.Deployment) error {
@@ -214,7 +266,11 @@ func (r *DockerRuntime) PrepareNetworkCutover(ctx context.Context, d store.Deplo
 		if c.State != "running" || !owned(c.Labels, r.Instance, d.ApplicationID) {
 			continue
 		}
-		if len(c.Ports) == 0 && d.Config.Database == nil {
+		published := false
+		for _, port := range c.Ports {
+			published = published || port.PublicPort != 0
+		}
+		if !published && d.Config.Database == nil {
 			continue
 		}
 		if _, err = r.Client.ContainerStop(ctx, c.ID, client.ContainerStopOptions{Timeout: ptr(StopSeconds(d.Config.Runtime))}); err != nil {
