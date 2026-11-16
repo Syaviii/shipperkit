@@ -3,6 +3,7 @@ import type { Service } from "../types";
 import { bytes } from "../data";
 import { Status } from "./Controls";
 import { Icon } from "./Icon";
+import ServiceLogo from "./ServiceLogo";
 
 export default function ServiceSummary(props: {
   services: Service[];
@@ -10,18 +11,20 @@ export default function ServiceSummary(props: {
   stats?: (service: string) => { cpuPercent?: number; memoryBytes?: number } | undefined;
   open?: (name: string) => void;
   routes?: (service: Service) => JSX.Element;
+  meta?: (service: Service) => { role?: string; mark?: string; logo?: string } | undefined;
 }) {
   return <div class="service-grid" role="list">
     <For each={props.services}>{service => {
       const stats = () => props.stats?.(service.name);
+      const meta = () => props.meta?.(service);
       const facts = () => <>
-        <span class="service-card-heading"><Icon name="box" /><strong>{service.name}</strong>
+        <span class="service-card-heading"><ServiceLogo logo={meta()?.logo} mark={meta()?.mark ?? ""} class="service-card-mark" /><strong>{service.name}</strong>
           <Show when={props.status}><Status value={props.status!(service)} /></Show>
           <Show when={props.open}><Icon name="chevron" /></Show>
         </span>
         <span class="service-card-image" title={service.image}>{service.image || "Build from source"}</span>
         <span class="service-card-facts">
-          <span>{service.oneShot ? "Job" : service.port ? "Port " + service.port : "Internal"}</span>
+          <Show when={meta()?.role} fallback={<span>{service.oneShot ? "Job" : service.port ? "Port " + service.port : "Internal"}</span>}><span>{meta()!.role}</span></Show>
           <Show when={service.volumes?.length}><span>{service.volumes.length} {service.volumes.length === 1 ? "volume" : "volumes"}</span></Show>
           <Show when={stats()?.cpuPercent != null}><span class="service-card-metric" title="CPU"><Icon name="cpu" />{stats()!.cpuPercent!.toFixed(1)}%</span></Show>
           <Show when={stats()?.memoryBytes != null}><span class="service-card-metric" title="Memory"><Icon name="memory" />{bytes(stats()!.memoryBytes!)}</span></Show>

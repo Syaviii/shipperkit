@@ -18,8 +18,18 @@ modernc SQLite (BSD-3-Clause), SQLite (public domain), and Go cryptography packa
 (BSD-3-Clause). JavaScript dependencies include SolidJS, Solid Router, TanStack
 Query, Vite, and Tailwind CSS under their respective permissive licenses.
 
-Coolify was studied as an architectural reference. No Coolify source is included
-in this implementation.
+Coolify's open-source service template library is included as a generated
+catalog manifest under `internal/catalog/catalog.json`. Coolify and those
+templates are Apache-2.0 licensed. Shipper converts the templates into its own
+service fields and Compose snapshots. Attribution and the list of modifications
+are in `internal/catalog/ATTRIBUTION.md`; the full license is in
+`internal/catalog/licenses/Apache-2.0.txt`. See
+[Coolify](https://github.com/coollabsio/coolify).
+
+Service Library logo assets under `web/public/service-logos` are trademarks of
+their respective projects. Most are copied from Coolify's `public/svgs` assets;
+curated-service logos use Simple Icons (CC0). They identify the service and do
+not imply endorsement.
 
 The runtime image includes unmodified Git from Alpine Linux (GPLv2), along with
 its system dependencies. Source and package metadata are available from
