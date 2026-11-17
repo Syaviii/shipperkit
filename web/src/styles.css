@@ -12740,3 +12740,280 @@ input[type="checkbox"]:disabled {
   height: auto;
   min-height: 88px;
 }
+
+/* Observability: capacity on the System page and the deployment diagnosis. */
+.capacity-charts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.metric-chart {
+  min-width: 0;
+  padding: 12px 14px 10px;
+  border: 1px solid var(--border-muted);
+  border-radius: 10px;
+  background: var(--deep);
+}
+.metric-chart header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.metric-chart header span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.metric-chart header strong {
+  font-size: 18px;
+  font-weight: 560;
+  letter-spacing: -0.4px;
+  font-variant-numeric: tabular-nums;
+}
+.metric-chart.warning header strong {
+  color: var(--warning);
+}
+.metric-chart.critical header strong {
+  color: var(--danger);
+}
+.metric-chart-plot {
+  display: block;
+  width: 100%;
+  height: 72px;
+  margin-top: 8px;
+  overflow: visible;
+}
+.metric-chart-line {
+  stroke: var(--secondary);
+  stroke-width: 1.4;
+}
+.metric-chart-area {
+  fill: color-mix(in oklab, var(--secondary) 8%, transparent);
+}
+.metric-chart-guide,
+.metric-chart-empty {
+  stroke: var(--border-muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+.metric-chart.warning .metric-chart-line {
+  stroke: var(--warning);
+}
+.metric-chart.warning .metric-chart-area {
+  fill: color-mix(in oklab, var(--warning) 9%, transparent);
+}
+.metric-chart.critical .metric-chart-line {
+  stroke: var(--danger);
+}
+.metric-chart.critical .metric-chart-area {
+  fill: color-mix(in oklab, var(--danger) 9%, transparent);
+}
+.metric-chart-detail {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.diagnosis-drawer .drawer-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.diagnosis-cause {
+  padding: 14px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--deep);
+}
+.diagnosis-cause-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.diagnosis-cause h3 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.4;
+  font-weight: 580;
+}
+.diagnosis-cause p {
+  margin: 6px 0 0;
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.diagnosis-evidence {
+  margin: 10px 0 0;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.diagnosis-evidence li {
+  overflow-wrap: anywhere;
+}
+.diagnosis-section > h3,
+.diagnosis-section-head h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 580;
+  color: var(--secondary);
+}
+.diagnosis-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.diagnosis-checks-table {
+  table-layout: fixed;
+}
+.diagnosis-checks-table th:nth-child(1) {
+  width: 100px;
+}
+.diagnosis-checks-table th:nth-child(2) {
+  width: 108px;
+}
+.diagnosis-checks-table td {
+  padding-block: 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.diagnosis-checks-table td:first-child {
+  color: var(--secondary);
+}
+.diagnosis-services {
+  display: grid;
+  gap: 8px;
+}
+.diagnosis-service {
+  padding: 12px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--deep);
+}
+.diagnosis-service header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.diagnosis-service header strong {
+  font-size: 13px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.diagnosis-service dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin: 0;
+}
+.diagnosis-service dl > div {
+  min-width: 0;
+}
+.diagnosis-service dt {
+  color: var(--muted);
+  font-size: 10px;
+}
+.diagnosis-service dd {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.diagnosis-log {
+  max-height: 220px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--deep);
+  color: var(--secondary);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.diagnosis-unknowns {
+  color: var(--muted);
+  font-size: 12px;
+}
+.diagnosis-unknowns summary {
+  cursor: pointer;
+}
+.diagnosis-unknowns ul {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  line-height: 1.6;
+}
+.diagnosis-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.diagnosis-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-muted);
+}
+.diagnosis-id {
+  color: var(--muted);
+  font-size: 11px;
+}
+.drawer-error,
+.drawer-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.drawer-error {
+  color: var(--danger);
+}
+@media (width < 48rem) {
+  .capacity-charts {
+    grid-template-columns: 1fr;
+  }
+  .metric-chart-plot {
+    height: 64px;
+  }
+  .diagnosis-service dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.diagnosis-drawer .drawer-scroll {
+  overflow-x: hidden;
+}
+.diagnosis-service header > *,
+.diagnosis-footer > * {
+  min-width: 0;
+}
+.diagnosis-service header strong {
+  overflow-wrap: anywhere;
+}
+.diagnosis-id {
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diagnosis-log-title {
+  margin: 10px 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 550;
+}
+.diagnosis-log-title:first-of-type {
+  margin-top: 0;
+}
