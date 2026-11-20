@@ -9,6 +9,7 @@ import type { Application, Domain, ProxyConfig, Service } from "../types";
 import { domainURL } from "../data";
 import { Button, ErrorNotice, IconButton, Status, validateForm } from "./Controls";
 import { Icon } from "./Icon";
+import DnsTarget from "./DnsTarget";
 
 export default function Domains(props: { application: Application; proxy?: ProxyConfig; services?: Service[]; service?: string; busy: boolean; save: (domains: Domain[]) => Promise<void>; configureService?: () => void; selectedHostname?: string }) {
   const saved = () => (props.application.domains ?? []).filter(d => !props.service || d.service === props.service);
@@ -91,6 +92,7 @@ export default function Domains(props: { application: Application; proxy?: Proxy
         <Show when={options.data?.canIncludeWWW && lookup() === hostname()}><label class="check-field"><input type="checkbox" checked={www()} onChange={e => setWWW(e.currentTarget.checked)} />Include www</label></Show>
         <Button icon="plus" onClick={add} disabled={!hostname().trim() || props.busy || compose() && !service()}>Add domain</Button>
       </div>
+      <DnsTarget address={props.proxy?.publicAddress} />
     </Show>
     <div class="domain-workspace" classList={{ "has-route": !!editing() }}><div class="domain-list"><For each={groups()}>{group => <div class="domain-group">
       <Show when={pickService() && group}><h3>{group}</h3></Show>
@@ -107,7 +109,7 @@ export default function Domains(props: { application: Application; proxy?: Proxy
             <div class="domain-facts">
               <span>{domain().https ? "HTTPS" : "HTTP"}</span>
               <Show when={domain().primary}><span>Primary</span></Show>
-              <Show when={domain().redirect} fallback={<code>{domain().pathPrefix || "/"}</code>}><span>Redirect to <strong>{target() || "primary domain"}</strong></span></Show>
+              <Show when={domain().redirect} fallback={<Show when={domain().pathPrefix && domain().pathPrefix !== "/"}><code>{domain().pathPrefix}</code></Show>}><span>Redirect to <strong>{target() || "primary domain"}</strong></span></Show>
               <Show when={verified()}><Status value="running" label="Verified" /></Show>
               <Show when={!stored(domain())}><Status value="queued" label="Unsaved" /></Show>
             </div>
@@ -141,6 +143,6 @@ export default function Domains(props: { application: Application; proxy?: Proxy
       </Show>
       </>;
     }}</For></div>}</For><Show when={!domains().length && canAdd()}><div class="empty-state">No domains <a class="docs-link" href={docs("domains/")} target="_blank" rel="noreferrer">Domain guide</a></div></Show></div></div>
-    <Show when={domains().length || dirty()}><EditorActions docked={dirty()} measure="form" inlineWhenFits><Button variant="primary" type="submit" form={formId} icon="check" disabled={props.busy || !dirty()}>Save domains</Button></EditorActions></Show>
+    <Show when={domains().length || dirty()}><EditorActions docked={dirty()} measure="form" inlineWhenFits revert={dirty() ? () => { setDomains(saved()); setEditing(undefined); setError(""); } : undefined}><Button variant="primary" type="submit" form={formId} icon="check" disabled={props.busy || !dirty()}>Save domains</Button></EditorActions></Show>
   </form>;
 }

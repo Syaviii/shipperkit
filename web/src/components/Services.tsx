@@ -26,12 +26,7 @@ export function ServiceList(props: { application: Application; services: Service
     const part = props.catalog?.services.find(item => item.name === service.name);
     return part ? { role: part.role, mark: part.name === props.catalog?.mainService ? props.catalog?.logomark : undefined, logo: part.name === props.catalog?.mainService ? props.catalog?.logo : undefined } : undefined;
   };
-  function status(service: Service) {
-    const containers = byService().get(service.name) ?? [];
-    if (service.oneShot && containers[0]?.state === "exited" && containers[0].status.startsWith("Exited (0)")) return "completed";
-    if (containers.some(c => statusOf(c) === "unhealthy")) return "unhealthy";
-    return containers[0] ? statusOf(containers[0]) : props.application.activeDeploymentId ? "unavailable" : "created";
-  }
+  const status = (service: Service) => serviceStatus(props.application, service, byService().get(service.name) ?? []);
   return <section class="containers-section"><h2>Services</h2>
     <Show when={props.services.length} fallback={<div class="empty-state">Not deployed</div>}>
       <ServiceSummary services={props.services} stats={props.stats} open={props.select} status={status} meta={props.catalog ? meta : undefined} />
@@ -39,9 +34,21 @@ export function ServiceList(props: { application: Application; services: Service
   </section>;
 }
 
-export function ServicePanel(props: { application: Application; services: Service[]; name: string; proxy?: ProxyConfig; busy: boolean; save: (config: StaticConfig) => Promise<boolean | void>; saveDomains: (domains: Domain[]) => Promise<void>; close: () => void; lifecycle:(action:string)=>Promise<void>; editCompose: () => void; catalog?: CatalogService }) {
-  const [tab, setTab] = createSignal("logs"), [error, setError] = createSignal("");
+export function serviceStatus(application: Application, service: Service, containers = application.containers.filter(c => c.service === service.name)) {
+  if (service.oneShot && containers[0]?.state === "exited" && containers[0].status.startsWith("Exited (0)")) return "completed";
+  if (containers.some(c => statusOf(c) === "unhealthy")) return "unhealthy";
+  return containers[0] ? statusOf(containers[0]) : application.activeDeploymentId ? "unavailable" : "created";
+}
+
+const serviceTabs = ["logs", "terminal", "env", "domains", "backups", "settings"];
+
+export function ServicePanel(props: { tab?: string; selectTab: (tab: string) => void;  application: Application; services: Service[]; name: string; proxy?: ProxyConfig; busy: boolean; save: (config: StaticConfig) => Promise<boolean | void>; saveDomains: (domains: Domain[]) => Promise<void>; close: () => void; lifecycle:(action:string)=>void; editCompose: () => void; catalog?: CatalogService }) {
+  const [error, setError] = createSignal("");
+  const tab = () => serviceTabs.includes(props.tab ?? "") ? props.tab! : "logs";
+  const setTab = (value: string) => props.selectTab(value);
   const service = () => props.services.find(s => s.name === props.name);
+  const state = () => service() ? serviceStatus(props.application, service()!) : "unavailable";
+  const running = () => ["running", "starting", "unhealthy", "restarting"].includes(state());
   const override = () => props.application.config.services?.find(s => s.name === props.name);
   const [port, setPort] = createSignal(override()?.port ?? service()?.port ?? 0), [health, setHealth] = createSignal(override()?.healthPath || service()?.healthPath || "/"), [memory, setMemory] = createSignal(override()?.memoryMB || 0);
   const [runtime,setRuntime]=createSignal<RuntimePolicy>(override()?.runtime??{});
@@ -52,14 +59,14 @@ export function ServicePanel(props: { application: Application; services: Servic
     return props.save({ ...config, services: [...(config.services ?? []).filter(s => s.name !== props.name), { ...current, ...value, name: props.name }] });
   }
   async function settings(e: SubmitEvent) { e.preventDefault();setError("");try { await save({ port: port(), healthPath: health(), memoryMB: memory(),runtime:runtime() }); }catch (e) { setError((e as Error).message); } }
-  return <section class="service-detail"><div class="app-context"><header class="service-heading"><Button icon="back" variant="ghost" class="service-parent" onClick={props.close}>{props.application.name}</Button><span class="service-sep" aria-hidden="true">/</span><span class="service-name">{props.name}</span><Show when={props.catalog?.documentation}><a class="service-docs" href={props.catalog!.documentation} target="_blank" rel="noreferrer">Documentation<Icon name="external" /></a></Show><ActionMenu label="Service actions" icon="more" class="service-actions" scope={tab()}><For each={["start","stop","restart"]}>{action=><button disabled={props.busy} onClick={()=>void props.lifecycle(action)}>{action[0].toUpperCase()+action.slice(1)} service</button>}</For></ActionMenu></header>
-    <nav class="service-tabs" aria-label="Service navigation"><For each={["logs", "terminal", "env", "domains", "backups", "settings"]}>{value => <button classList={{ active: tab() === value }} aria-current={tab() === value ? "page" : undefined} onClick={() => setTab(value)}>{value === "env" ? ".env" : value[0].toUpperCase() + value.slice(1)}</button>}</For></nav>
+  return <section class="service-detail"><div class="app-context"><header class="service-heading"><Button icon="back" variant="ghost" class="service-parent" onClick={props.close}>{props.application.name}</Button><span class="service-sep" aria-hidden="true">/</span><span class="service-name">{props.name}</span><Status value={state()} /><Show when={service()}>{item => <span class="service-facts"><span class="truncate" title={item().image}>{item().image}</span><span class="service-fact-sep" aria-hidden="true" /><span>{item().port ? "Port " + item().port : "Internal"}</span></span>}</Show><Show when={props.catalog?.documentation}><a class="service-docs" href={props.catalog!.documentation} target="_blank" rel="noreferrer">Documentation<Icon name="external" /></a></Show><ActionMenu label="Service actions" icon="more" class="service-actions" scope={tab()}><For each={running() ? ["restart", "stop"] : ["start"]}>{action=><button disabled={props.busy} onClick={()=>props.lifecycle(action)}>{action[0].toUpperCase()+action.slice(1)} service</button>}</For></ActionMenu></header>
+    <nav class="service-tabs" aria-label="Service navigation"><For each={serviceTabs}>{value => <button classList={{ active: tab() === value }} aria-current={tab() === value ? "page" : undefined} onClick={() => setTab(value)}>{value === "env" ? ".env" : value[0].toUpperCase() + value.slice(1)}</button>}</For></nav>
     </div><Show when={error()}><ErrorNotice message={error()} /></Show>
     <Show when={tab() === "backups"}><Backups application={props.application} services={props.services} service={props.name} save={props.save}/></Show>
     <Show when={tab() === "terminal"}><ServiceTerminal application={app()} /></Show>
     <Show when={tab() === "logs"}><RuntimeLogs application={app()} /></Show>
     <Show when={tab() === "env"}><Variables application={app()} service={props.name} busy={props.busy} save={config => { const rows = config.variables, names = new Set(rows.map(v => v.name)), inherited = new Set((service()?.variables ?? []).map(v => v.name)), owned = new Set((override()?.variables ?? []).map(v => v.name));return save({ variables: rows.filter(v => owned.has(v.name) || !inherited.has(v.name) || !v.keep || !!v.keepFrom || !v.secret).map(v => ({ ...v, scope: "runtime" })), unsetVariables: [...new Set([...(override()?.unsetVariables ?? []), ...inherited])].filter(name => !names.has(name)) }); }} /></Show>
     <Show when={tab() === "domains"}><Domains application={props.application} services={props.services} service={props.name} proxy={props.proxy} busy={props.busy} save={props.saveDomains} configureService={() => setTab("settings")} /></Show>
-    <Show when={tab() === "settings"}><form onSubmit={settings} class="service-settings"><div class="form-fields"><label for="service-port">HTTP port</label><input id="service-port" class="input" type="number" min="0" max="65535" value={port() || ""} placeholder="Internal service" onInput={e => setPort(Number(e.currentTarget.value) || 0)} /><label for="service-health">Health check path</label><input id="service-health" class="input" value={health()} onInput={e => setHealth(e.currentTarget.value)} /><label for="service-memory">Memory limit (MiB)</label><input id="service-memory" class="input" type="number" min="64" max="8192" placeholder="Compose configuration" value={memory() || ""} onInput={e => setMemory(Number(e.currentTarget.value) || 0)} /></div><RuntimeFields value={runtime()} change={setRuntime} service/><Show when={service()?.volumes.length}><section class="volume-settings"><h2>Volumes</h2><div class="table-tray"><table class="inventory-table"><thead><tr><th>Source</th><th>Mount path</th></tr></thead><tbody><For each={service()?.volumes}>{volume => <tr><td class="mono">{volume.name || "Persistent volume"}</td><td class="mono">{volume.path}</td></tr>}</For></tbody></table></div></section></Show><div class="form-actions"><Button variant="ghost" icon="code" onClick={props.editCompose}>Compose source</Button><Button type="submit" variant="primary" icon="deploy" disabled={props.busy}>Review changes</Button></div></form></Show>
+    <Show when={tab() === "settings"}><form onSubmit={settings} class="service-settings"><div class="form-fields field-pairs service-settings-fields"><div class="field"><label for="service-port">HTTP port</label><input id="service-port" class="input" type="number" min="0" max="65535" value={port() || ""} placeholder="Internal service" onInput={e => setPort(Number(e.currentTarget.value) || 0)} /></div><div class="field"><label for="service-health">Health check path</label><input id="service-health" class="input" value={health()} onInput={e => setHealth(e.currentTarget.value)} /></div><div class="field"><label for="service-memory">Memory limit (MiB)</label><input id="service-memory" class="input" type="number" min="64" max="8192" placeholder="Compose configuration" value={memory() || ""} onInput={e => setMemory(Number(e.currentTarget.value) || 0)} /></div></div><RuntimeFields value={runtime()} change={setRuntime} service/><Show when={service()?.volumes.length}><section class="volume-settings"><h2>Volumes</h2><div class="table-tray"><table class="inventory-table"><thead><tr><th>Source</th><th>Mount path</th></tr></thead><tbody><For each={service()?.volumes}>{volume => <tr><td class="mono">{volume.name || "Persistent volume"}</td><td class="mono">{volume.path}</td></tr>}</For></tbody></table></div></section></Show><div class="form-actions"><Button variant="ghost" icon="code" onClick={props.editCompose}>Compose source</Button><Button type="submit" variant="primary" icon="deploy" disabled={props.busy}>Save and redeploy</Button></div></form></Show>
   </section>;
 }

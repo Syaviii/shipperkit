@@ -1,5 +1,5 @@
 import { createQuery } from "@tanstack/solid-query";
-import { For, Show, createEffect, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import { api, post } from "../api";
 import { useAuth } from "../context";
 import type { Connection, StaticConfig } from "../types";
@@ -14,11 +14,13 @@ export function useConnections() {
 export function GitConnectionFields(props: {
   config: StaticConfig;
   change: (key: keyof StaticConfig, value: unknown) => void;
+  // The settings source list already names every connection.
+  withoutConnection?: boolean;
 }) {
   const connections = useConnections();
   return (
     <>
-      <Show when={connections.data?.items.some(c => c.kind !== "registry")}
+      <Show when={!props.withoutConnection}><Show when={connections.data?.items.some(c => c.kind !== "registry")}
         fallback={<a class="button neutral small source-connect" href="/settings#sources"><Icon name="git" />Connect GitHub</a>}>
         <div class="field git-field"><label for="source-connection">Connection</label>
           <select id="source-connection" class="input" value={props.config.sourceId ?? ""} onChange={e => {
@@ -31,7 +33,7 @@ export function GitConnectionFields(props: {
             <For each={connections.data?.items.filter(c => c.kind !== "registry")}>{c => <option value={c.id}>{c.name}</option>}</For>
           </select>
         </div>
-      </Show>
+      </Show></Show>
       <Show when={props.config.sourceId} keyed>{sourceId => <RepositoryPicker sourceId={sourceId} config={props.config} change={props.change} />}</Show>
     </>
   );
@@ -67,6 +69,16 @@ export function RepositoryPicker(props: {
       ]);
   });
   const firstLoad = () => repos.isPending && rows().length === 0;
+  // The saved repository is always an option and always marked selected, so an existing
+  // application opens with its repository chosen while the list loads, pages or refetches.
+  const options = createMemo(() => {
+    const saved = props.config.repository, query = search().toLowerCase();
+    const listed = rows().filter((r) => r.clone_url === saved || r.full_name.toLowerCase().includes(query))
+      .map((r) => ({ value: r.clone_url, label: r.full_name }));
+    return saved && !listed.some((option) => option.value === saved)
+      ? [{ value: saved, label: saved.replace("https://github.com/", "").replace(/\.git$/, "") }, ...listed]
+      : listed;
+  });
   return (
       <div class="repository-picker field git-field" aria-busy={firstLoad()}>
         <Show when={rows().length > 20}>
@@ -83,7 +95,7 @@ export function RepositoryPicker(props: {
           id="private-repository"
           class="input"
           required
-          disabled={rows().length === 0}
+          disabled={options().length === 0}
           aria-busy={firstLoad()}
           value={props.config.repository}
           onChange={(e) => {
@@ -97,27 +109,11 @@ export function RepositoryPicker(props: {
             }
           }}
         >
-          <option value="">
+          <option value="" selected={!props.config.repository}>
             {firstLoad() ? "Loading repositories" : repos.isError && !rows().length ? "Repositories unavailable" : !rows().length ? "No repositories available" : "Choose repository"}
           </option>
-          <Show
-            when={
-              props.config.repository &&
-              !rows().some((r) => r.clone_url === props.config.repository)
-            }
-          >
-            <option value={props.config.repository}>
-              {props.config.repository
-                .replace("https://github.com/", "")
-                .replace(/\.git$/, "")}
-            </option>
-          </Show>
-          <For
-            each={rows().filter((r) =>
-              r.full_name.toLowerCase().includes(search().toLowerCase()),
-            )}
-          >
-            {(r) => <option value={r.clone_url}>{r.full_name}</option>}
+          <For each={options()}>
+            {(option) => <option value={option.value} selected={option.value === props.config.repository}>{option.label}</option>}
           </For>
         </select>
         <Show when={repos.data?.nextPage}>

@@ -13,6 +13,9 @@ type Props = {
   close: () => void;
   use: (request: { name: string; config: StaticConfig }) => Promise<void>;
   acme: boolean;
+  // A wildcard zone that resolves to this server, such as 203.0.113.10.sslip.io.
+  domainSuffix?: string;
+  secureDefault?: boolean;
 };
 
 const categoryIcons: Record<string, IconName> = {
@@ -58,10 +61,10 @@ function optionLabel(value: string) {
   return value;
 }
 
-function hostFor(id: string, index: number, port: number) {
+function hostFor(id: string, index: number, port: number, suffix = "localhost") {
   const base = slug(id);
-  if (index === 0) return base + ".localhost";
-  return base + "-" + port + ".localhost";
+  if (index === 0) return base + "." + suffix;
+  return base + "-" + port + "." + suffix;
 }
 
 export default function ServiceLibrary(props: Props) {
@@ -103,11 +106,12 @@ export default function ServiceLibrary(props: Props) {
   const domainFields = createMemo(() => fields().filter(field => field.kind === "domain"));
   const accessFields = createMemo(() => fields().filter(field => field.group === "access" && field.kind !== "domain"));
   const configList = createMemo(() => fields().filter(field => field.group !== "access" && field.kind !== "domain" && !field.advanced && field.group !== "advanced"));
-  const configFields = createMemo(() => configList().slice(0, 10));
+  // Only fields a deployment cannot do without stay visible; every tuning knob waits under Advanced.
+  const configFields = createMemo(() => configList().filter(field => field.required && !field.generate));
   const advancedFields = createMemo(() => {
     const explicit = fields().filter(field => field.kind !== "domain" && (field.advanced || field.group === "advanced"));
-    const seen = new Set(explicit.map(field => field.key));
-    return [...explicit, ...configList().slice(10).filter(field => !seen.has(field.key))];
+    const seen = new Set([...explicit, ...configFields()].map(field => field.key));
+    return [...configList().filter(field => !seen.has(field.key)), ...explicit];
   });
   const domainRows = createMemo<CatalogDomain[]>(() => {
     const value = service();
@@ -167,8 +171,8 @@ export default function ServiceLibrary(props: Props) {
     const nextSecure: Record<string, boolean> = {};
     domainRows().forEach((domain, index) => {
       const key = "service:" + domain.service;
-      nextHosts[key] = hostFor(value.id, index, domain.port);
-      nextSecure[key] = false;
+      nextHosts[key] = hostFor(value.id, index, domain.port, props.domainSuffix);
+      nextSecure[key] = !!props.secureDefault && !nextHosts[key].endsWith(".localhost");
     });
     setValues(nextValues);
     setHostnames(nextHosts);
@@ -373,22 +377,18 @@ export default function ServiceLibrary(props: Props) {
               </Show>
               <Show when={configFields().length}>
                 <section class="library-group"><h4>Configuration</h4><div class="library-field-grid">
-                  <For each={configFields()}>{field => <label class="library-field" classList={{ wide: field.kind === "textarea" }}><span>{field.label}</span>
-                    <Show when={field.kind === "select"} fallback={<Show when={field.kind === "textarea"} fallback={<input class="input" type={field.kind === "number" ? "number" : field.kind === "email" ? "email" : "text"} value={value(field.key)} placeholder={field.placeholder ?? field.default} autocomplete="off" onInput={event => setValue(field.key, event.currentTarget.value)} />}><textarea class="input" rows={3} value={value(field.key)} onInput={event => setValue(field.key, event.currentTarget.value)} /></Show>}>
-                      <select class="input" value={value(field.key)} onChange={event => setValue(field.key, event.currentTarget.value)}><For each={field.options ?? []}>{option => <option value={option}>{optionLabel(option)}</option>}</For></select>
-                    </Show>
-                  </label>}</For>
+                  <For each={configFields()}>{field => <ConfigField field={field} value={value(field.key)} change={next => setValue(field.key, next)} />}</For>
                 </div></section>
               </Show>
               <Show when={advancedFields().length}><details class="library-advanced" open={advanced()} onToggle={event => setAdvanced(event.currentTarget.open)}>
                 <summary>Advanced<Icon name="down" /></summary>
-                <div class="library-field-grid"><For each={advancedFields()}>{field => <label class="library-field"><span>{field.label}</span><input class="input" type={field.kind === "number" ? "number" : "text"} value={value(field.key)} placeholder={field.placeholder} onInput={event => setValue(field.key, event.currentTarget.value)} /></label>}</For></div>
+                <div class="library-field-grid"><For each={advancedFields()}>{field => <ConfigField field={field} value={value(field.key)} change={next => setValue(field.key, next)} />}</For></div>
               </details></Show>
             </div>
           </div>
           <footer class="library-footer">
             <Show when={error()}><div class="library-alert" role="alert">{error()}</div></Show>
-            <div class="library-footer-actions"><Button variant="ghost" type="button" disabled={using()} onClick={props.close}>Cancel</Button><Button variant="primary" type="submit" disabled={using() || detail.isPending}>{using() ? "Preparing deployment" : "Review deployment"}</Button></div>
+            <div class="library-footer-actions"><Button variant="ghost" type="button" disabled={using()} onClick={props.close}>Cancel</Button><Button variant="primary" type="submit" disabled={using() || detail.isPending}>{using() ? "Deploying" : "Deploy"}</Button></div>
           </footer>
         </>}</Show>
       </form>}>
@@ -417,10 +417,18 @@ export default function ServiceLibrary(props: Props) {
   </div></Portal></Show>;
 }
 
-export function ServiceLibraryEntry(props: { open: () => void; count?: number }) {
+function ConfigField(props: { field: CatalogField; value: string; change: (value: string) => void }) {
+  return <label class="library-field" classList={{ wide: props.field.kind === "textarea" }}><span>{props.field.label}</span>
+    <Show when={props.field.kind === "select"} fallback={<Show when={props.field.kind === "textarea"} fallback={<input class="input" type={props.field.kind === "number" ? "number" : props.field.kind === "email" ? "email" : "text"} value={props.value} placeholder={props.field.placeholder ?? props.field.default} autocomplete="off" onInput={event => props.change(event.currentTarget.value)} />}><textarea class="input" rows={3} value={props.value} onInput={event => props.change(event.currentTarget.value)} /></Show>}>
+      <select class="input" value={props.value} onChange={event => props.change(event.currentTarget.value)}><For each={props.field.options ?? []}>{option => <option value={option}>{optionLabel(option)}</option>}</For></select>
+    </Show>
+  </label>;
+}
+
+export function ServiceLibraryEntry(props: { open: () => void }) {
   return <button type="button" class="library-entry" onClick={props.open}>
     <span class="library-entry-icon"><Icon name="layers" /></span>
-    <span><strong>Service Library</strong><small>{props.count ? props.count + " ready-made services" : "360+ ready-made services"}</small></span>
+    <span><strong>Service Library</strong></span>
     <Icon name="chevron" />
   </button>;
 }

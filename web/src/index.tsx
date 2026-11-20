@@ -9,13 +9,15 @@ import AuthPage from "./pages/Auth";
 import FactorGate from "./pages/FactorGate";
 import Shell from "./components/Shell";
 import SelectMenu from "./components/SelectMenu";
+import { keepSelectValues } from "./selectValue";
+
+keepSelectValues();
 import Applications from "./pages/Applications";
 import Settings from "./pages/Settings";
 import System from "./pages/System";
 import Application from "./pages/Application";
 import CliAuthorize from "./pages/CliAuthorize";
 import { Button, ErrorNotice } from "./components/Controls";
-import {clearVolatileDrafts} from "./drafts";
 import "./styles.css";
 
 const NewApplication = lazy(() => import("./pages/NewApplication"));
@@ -32,12 +34,11 @@ function SystemRoute() {
 
 function App() {
   const session = createQuery(() => ({ queryKey: ["session"], queryFn: () => api<Session>("/auth/session"), retry: 1 }));
-  function expire() { queryClient.setQueryData<Session>(["session"], { setupRequired: false, user: null });clearVolatileDrafts(); }
+  function expire() { queryClient.setQueryData<Session>(["session"], { setupRequired: false, user: null }); }
   const refresh = () => void session.refetch();
   function accept(value: Session) {
     queryClient.setQueryData(["session"], value);
     if (value.authStep) {
-      clearVolatileDrafts();
       queryClient.removeQueries({ predicate: query => query.queryKey[0] !== "session" });
     }
   }
@@ -62,7 +63,7 @@ function App() {
             <SelectMenu />
             <Router root={Shell}><Route path="/" component={Applications} /><Route path="/settings" component={Settings} /><Route path="/system" component={SystemRoute}/>
               <Route path="/new" component={NewApplication} /><Route path="/applications/:id" component={Application} /><Route path="/cli/authorize" component={CliAuthorize} />
-              <Route path="*404" component={() => <div class="content content-narrow"><h1>Page not found</h1><Button onClick={() => window.location.assign("/")}>Applications</Button></div>} />
+              <Route path="*404" component={() => <div class="content content-narrow not-found"><h1>Page not found</h1><Button onClick={() => window.location.assign("/")}>Applications</Button></div>} />
             </Router>
           </Show>
         </Show>

@@ -7,7 +7,8 @@ import { Icon } from "./Icon";
 import Networking from "./Networking";
 
 const empty = (): NetworkAccess => ({ applications: [], ports: [] });
-const normalize = (value?: NetworkAccess | null): NetworkAccess => ({ applications: value?.applications ?? [], ports: value?.ports ?? [] });
+// Copies keep edits independent of the refetched application data.
+const normalize = (value?: NetworkAccess | null): NetworkAccess => ({ applications: [...(value?.applications ?? [])], ports: (value?.ports ?? []).map(port => ({ ...port })) });
 const portLabel = (port: PublishedPort) => port.hostPort + "/" + port.protocol + " to container port " + port.containerPort + " on " + (port.bindIP === "0.0.0.0" ? "all interfaces" : port.bindIP === "127.0.0.1" ? "loopback" : port.bindIP);
 const samePort = (a: PublishedPort, b: PublishedPort) => a.protocol === b.protocol && a.hostPort === b.hostPort && a.containerPort === b.containerPort && a.bindIP === b.bindIP;
 
@@ -18,7 +19,7 @@ export default function ApplicationNetworking(props: {
   save: (config: StaticConfig, summary?: ReviewSummaryItem[], note?: string) => Promise<boolean | void>;
   onDirty?: (value: boolean) => void;
 }) {
-  const info = createQuery(() => ({ queryKey: ["applications", props.application.id, "networking"], queryFn: () => api<NetworkingInfo>(`/applications/${props.application.id}/networking`) }));
+  const info = createQuery(() => ({ queryKey: ["applications", props.application.id, "networking"], queryFn: () => api<NetworkingInfo>(`/applications/${props.application.id}/networking`), reconcile: "id" }));
   const [value, setValue] = createSignal<NetworkAccess>(normalize(props.application.config.networking));
   const [tlsHostname, setTlsHostname] = createSignal(props.application.config.database?.tlsHostname ?? "");
   const [tlsOn, setTlsOn] = createSignal(!!props.application.config.database?.tlsHostname);
@@ -108,17 +109,17 @@ export default function ApplicationNetworking(props: {
     <Show when={info.data} fallback={<Show when={!info.error}><span class="loading-line" aria-label="Loading networking" /></Show>}>
       <fieldset disabled={props.busy || saving()} class="creation-fields">
         <Networking value={value()} change={update} applicationId={props.application.id} services={props.services}
-          applications={info.data!.applications} host={info.data!.host} port={props.application.config.port} database={!!props.application.config.database} tlsCapable={["postgresql", "mysql", "mariadb", "redis"].includes(props.application.config.database?.engine ?? "")}
+          applications={info.data!.applications} host={info.data!.host} name={props.application.name} port={props.application.config.port} database={!!props.application.config.database} tlsCapable={["postgresql", "mysql", "mariadb", "redis"].includes(props.application.config.database?.engine ?? "")}
           tlsHostname={tlsHostname()} changeTLS={setTlsHostname} conflictPort={conflict()} tlsOn={tlsOn()} changeTLSOn={toggleTLS} tlsInvalid={tlsInvalid()} />
       </fieldset>
     </Show>
     <Show when={error() && conflict() === undefined}><ErrorNotice message={error()} /></Show>
     <Show when={info.data && changed() && !saving()}><div class="form-actions network-review-bar">
-      <Show when={changed()}><span class="network-unsaved-page"><span class="network-unsaved-dot" />Unsaved changes</span></Show>
-      <Show when={changed()}><Button variant="neutral" type="button" disabled={saving()} onClick={reset}>Discard changes</Button></Show>
+      <Show when={changed()}><span class="network-unsaved-page"><span class="network-unsaved-dot" />You have unsaved changes</span></Show>
+      <Show when={changed()}><Button variant="ghost" type="button" disabled={saving()} onClick={reset}>Revert</Button></Show>
       <Show when={portProblem()}><span class="network-review-block" role="alert"><Icon name="warning" />{portProblem()}</span></Show>
       <Show when={conflict() !== undefined || tlsInvalid()}><button type="button" class="network-issue-count" onClick={() => document.querySelector<HTMLInputElement>(".network-field.is-conflict input, .network-tls .is-invalid")?.focus()}>{issues()} {issues() === 1 ? "issue" : "issues"}</button></Show>
-      <Button type="submit" variant="primary" disabled={!changed() || props.busy || saving() || issues() > 0}>{saving() ? "Preparing review" : "Review changes"}</Button>
+      <Button type="submit" variant="primary" disabled={!changed() || props.busy || saving() || issues() > 0}>{saving() ? "Saving" : "Save and redeploy"}</Button>
     </div></Show>
   </form>;
 }

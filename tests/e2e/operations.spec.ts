@@ -65,23 +65,24 @@ test("System tokens, notification choices and responsive diagnostics", async({pa
   await checkDatabaseConnection(page);
   await page.getByRole("link",{name:"System",exact:true}).click();
   await expect(page).toHaveTitle("System | Shipper");await expect(page.getByRole("heading",{name:"Health",exact:true})).toBeVisible();
-  await page.getByRole("link",{name:"Access tokens",exact:true}).click();await expect(page.getByRole("heading",{name:"Health",exact:true})).toHaveCount(0);
+  await page.goto("/system#tokens");await expect(page).toHaveURL(/settings#tokens$/);await expect(page.getByRole("heading",{name:"Health",exact:true})).toHaveCount(0);
   await page.getByText("Create token",{exact:true}).first().click();
   await page.getByLabel("Name",{exact:true}).fill("Read-only test automation");
-  await page.getByLabel("Application",{exact:true}).selectOption("application-web");
+  await page.getByLabel("Full app access",{exact:true}).check();await expect(page.getByLabel("Deploy",{exact:true})).toBeDisabled();await expect(page.getByLabel("Deploy",{exact:true})).toBeChecked();await page.getByLabel("Full app access",{exact:true}).uncheck();
+  await page.getByLabel("Application",{exact:true}).selectOption("application-web");await expect(page.getByLabel("Host maintenance",{exact:true})).toBeDisabled();
   await page.getByRole("button",{name:"Create token",exact:true}).click();
   await expect(page.getByLabel("New access token")).toHaveValue(/^[a-f0-9]{64}$/);
   const raw=await page.getByLabel("New access token").inputValue();
   const allowed=await page.request.get("/api/v1/applications/application-web/diagnostics",{headers:{Authorization:"Bearer "+raw}});expect(allowed.status()).toBe(200);
   const denied=await page.request.post("/api/v1/applications/application-web/deployments",{headers:{Authorization:"Bearer "+raw},data:{}});expect(denied.status()).toBe(403);
-  await page.getByRole("button",{name:"Dismiss",exact:true}).click();await expect(page.getByLabel("New access token")).toHaveCount(0);
-  await page.getByRole("row").filter({hasText:"Read-only test automation"}).getByRole("button",{name:"Revoke",exact:true}).click();
+  await page.getByRole("button",{name:"Done",exact:true}).click();await expect(page.getByLabel("New access token")).toHaveCount(0);
+  await page.getByRole("row").filter({hasText:"Read-only test automation"}).getByRole("button",{name:"Revoke",exact:true}).click();await page.getByRole("alertdialog").getByRole("button",{name:"Revoke token",exact:true}).click();
   await expect(page.getByRole("row").filter({hasText:"Read-only test automation"})).toHaveCount(0);
   expect((await page.request.get("/api/v1/capabilities",{headers:{Authorization:"Bearer "+raw}})).status()).toBe(401);
   await page.getByRole("link",{name:"Notifications",exact:true}).click();
   await page.getByLabel("Enabled",{exact:true}).check();await page.getByRole("radio",{name:"Email",exact:true}).check();await expect(page.getByLabel("SMTP host",{exact:true})).toBeVisible();await page.getByRole("radio",{name:"Webhook",exact:true}).check();await expect(page.getByLabel("Webhook URL",{exact:true})).toBeVisible();
   await page.getByLabel("Enabled",{exact:true}).uncheck();
-  await page.getByRole("link",{name:"Overview",exact:true}).click();await page.locator(".page-scroll").evaluate(el=>el.scrollTop=0);
+  await page.goto("/system");await page.locator(".page-scroll").evaluate(el=>el.scrollTop=0);
   await page.screenshot({path:join(tmpdir(),"shipper-phase9-system.png"),fullPage:true});
   await page.setViewportSize({width:390,height:844});await expect(page.getByRole("heading",{name:"System",exact:true})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:join(tmpdir(),"shipper-phase9-system-mobile.png"),fullPage:true});
@@ -142,4 +143,30 @@ test("Local folder source can be reviewed without connecting Git",async({page})=
  await expect(page.locator(".creation-review").getByRole("link", {name:"example/compose-demo",exact:true})).toHaveAttribute("href",repository);
  await expect(page.locator(".creation-review")).toContainText(commit.slice(0,12));
  await expect(page.locator(".creation-review")).toContainText("deploy/compose.yaml");
+});
+
+test("background refetches keep chosen select values", async ({ page }) => {
+  await login(page);
+  const csrf = (await (await page.request.get("/api/auth/session")).json()).csrfToken;
+  const refresh = async () => {
+    await page.evaluate(token => fetch("/api/refresh", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": token }, body: "{}" }), csrf);
+    await page.waitForTimeout(1200);
+  };
+  const shown = (select: import("@playwright/test").Locator) => select.evaluate((el: HTMLSelectElement) => el.selectedOptions[0]?.textContent);
+  await page.route("**/api/applications/application-web/networking", route => route.fulfill({ json: { networking: { applications: [], ports: [] }, host: "app-application-web", applications: [
+    { id: "a1", name: "Alpha", host: "app-a1" }, { id: "b2", name: "Beta", host: "app-b2" }, { id: "c3", name: "Gamma", host: "app-c3" }] } }));
+  await page.goto("/applications/application-web?tab=networking");
+  await page.getByRole("button", { name: "Connect application", exact: true }).first().click();
+  const connected = page.getByLabel("Connected application 1", { exact: true });
+  await connected.selectOption("c3");
+  await refresh();
+  await expect(connected).toHaveValue("c3");
+  expect(await shown(connected)).toBe("Gamma");
+  await page.goto("/settings#tokens");
+  await page.getByRole("button", { name: "Create token", exact: true }).click();
+  const application = page.getByLabel("Application", { exact: true });
+  await application.selectOption("application-web");
+  await refresh();
+  await expect(application).toHaveValue("application-web");
+  expect(await shown(application)).toBe("Website");
 });

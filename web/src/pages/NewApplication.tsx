@@ -4,8 +4,7 @@ import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on
 import { createStore, reconcile } from "solid-js/store";
 import { api, post } from "../api";
 import type { Application, Deployment, ProxyConfig, Service, StaticConfig } from "../types";
-import { useAuth } from "../context";
-import { clearDraft, readDraft, safeConfigDraft, saveDraft, saveVolatileDraft } from "../drafts";
+import { useAuth, useInventory } from "../context";
 import { emptyVariable } from "../env";
 import { repositoryLabel } from "../data";
 import { Button, ErrorNotice, validateForm } from "../components/Controls";
@@ -41,7 +40,6 @@ type Inspection = {
 };
 type Preview = { services: Service[]; files: string[]; composeFile: string; commit?: string };
 type CreatePlan = { applicationId: string; revision: string; name: string; config: StaticConfig; commit?: string };
-type Draft = { name: string; source?: Source; composeInput?: "git" | "local" | "paste"; config: StaticConfig };
 const sources: readonly Choice<Source>[] = [
   { value: "git", label: "Git repository", icon: "git" },
   { value: "image", label: "Container image", icon: "box" },
@@ -50,40 +48,17 @@ const sources: readonly Choice<Source>[] = [
   { value: "compose", label: "Inline Docker Compose", icon: "layers" },
 ];
 const steps = [{ value: "source", label: "Source" }, { value: "configure", label: "Configure" }, { value: "review", label: "Review" }] as const;
-const libraryChoice: Choice<Source> = { value: "library", label: "Service Library", icon: "layers", detail: "360+ ready-made services" };
+const libraryChoice: Choice<Source> = { value: "library", label: "Service Library", icon: "layers" };
 
-function draftSource(draft?: Draft): Source {
-  const config = draft?.config;
-  if (draft?.source === "compose" || config?.method === "compose") {
-    if (draft?.source === "git" || draft?.source === "local") return draft.source;
-    if (draft?.composeInput === "git" || draft?.composeInput === "local") return draft.composeInput;
-    if (config?.composeSource === "paste") return "compose";
-    return config?.localSource ? "local" : "git";
-  }
-  if (draft?.source) return draft.source;
-  if (config?.method === "image" || config?.method === "inline") return config.method;
-  return config?.localSource ? "local" : "git";
-}
-
-function persistedConfig(config: StaticConfig): StaticConfig {
-  const safe = safeConfigDraft(config);
-  // An unfinished URL or shell command may contain credentials even when it
-  // never reached server validation. Keep these inputs only in memory.
-  try {
-    const url = new URL(safe.repository);
-    if (url.username || url.password || url.search || url.hash) safe.repository = "";
-  } catch { safe.repository = ""; }
-  return { ...safe, image: safe.image?.includes("://") ? "" : safe.image,
-    hooks: [], installCommand: "", buildCommand: "", startCommand: "" };
+function hostLabel(value: string) {
+  return value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "") || "app";
 }
 
 export default function NewApplication() {
-  const auth = useAuth(), navigate = useNavigate();
-  const key = "new:" + auth.session()?.user?.id;
-  const draft = readDraft<Draft>(key);
-  const [config, setConfig] = createStore<StaticConfig>({ ...emptyConfig(), ...draft?.config });
-  const [source, setSource] = createSignal<Source>(draftSource(draft));
-  const [name, setName] = createSignal(draft?.name ?? "");
+  const auth = useAuth(), navigate = useNavigate(), inventory = useInventory();
+  const [config, setConfig] = createStore<StaticConfig>(emptyConfig());
+  const [source, setSource] = createSignal<Source>("git");
+  const [name, setName] = createSignal("");
   const [databaseOpen, setDatabaseOpen] = createSignal(false);
   const [manual, setManual] = createSignal(false);
   const [sourcePanel, setSourcePanel] = createSignal(false);
@@ -101,6 +76,10 @@ export default function NewApplication() {
   const [review, setReview] = createSignal<{ plan: CreatePlan; inputs: StaticConfig; commit?: string; requestKey: string }>();
   const [envKey, setEnvKey] = createSignal(1);
   const [envOpen, setEnvOpen] = createSignal(false);
+  // Review edits stay local until Deploy, which plans again when they differ from the approved plan.
+  const [reviewName, setReviewName] = createSignal("");
+  const [reviewDomain, setReviewDomain] = createSignal("");
+  const [domainFollowsName, setDomainFollowsName] = createSignal(false);
   const proxy = createQuery(() => ({ queryKey: ["proxy"], queryFn: () => api<ProxyConfig>("/proxy") }));
   const acme = () => !!proxy.data?.acmeEmail;
   const compose = () => config.method === "compose" || !manual() && config.method === "auto" && !!detected()?.composeFile;
@@ -122,6 +101,35 @@ export default function NewApplication() {
   };
   const missing = () => (detected()?.variables ?? []).filter(v => !config.variables.some(row => row.name === v));
   const staleDomains = () => (config.domains ?? []).filter(d => !stack()?.services.some(s => s.name === d.service && s.port && !s.oneShot));
+  const routedService = () => stack()?.services.find(service => service.port && !service.oneShot)?.name;
+  const secureDomain = (hostname: string) => !!proxy.data?.autoHTTPS && acme() && !hostname.toLowerCase().endsWith(".localhost");
+  function defaultDomain(label: string) {
+    const suffix = proxy.data?.appDomainSuffix;
+    if (!suffix) return "";
+    const taken = new Set((inventory.data()?.items ?? []).flatMap(app => [app.config?.domain, ...(app.domains ?? []).map(d => d.hostname)]).filter(Boolean));
+    const base = hostLabel(label);
+    let hostname = base + "." + suffix;
+    for (let n = 2; taken.has(hostname); n++) hostname = base + "-" + n + "." + suffix;
+    return hostname;
+  }
+  // Every web application gets a reachable address unless one was chosen.
+  function withDefaultDomain(inputs: StaticConfig) {
+    if (config.database || worker()) return false;
+    const hostname = defaultDomain(name().trim() || suggestedName());
+    if (!hostname) return false;
+    if (compose()) {
+      const service = routedService();
+      if (!service || inputs.domains?.length) return false;
+      inputs.domains = [{ id: "service-" + service, hostname, service, https: secureDomain(hostname), primary: true, redirect: false }];
+    } else {
+      if (inputs.domain) return false;
+      inputs.domain = hostname; inputs.https = secureDomain(hostname);
+    }
+    return true;
+  }
+  function reviewedDomain(approved: CreatePlan) {
+    return compose() ? approved.config.domains?.find(d => d.service === routedService())?.hostname ?? approved.config.domains?.[0]?.hostname ?? "" : approved.config.domain;
+  }
 
   let heading!: HTMLHeadingElement;
   let disposed = false;
@@ -129,11 +137,6 @@ export default function NewApplication() {
   const sourceDrafts = new Map<Source, StaticConfig>();
   onCleanup(() => { disposed = true; });
   onMount(() => { document.title = "New application | Shipper"; });
-  createEffect(() => {
-    const current = { name: name(), source: source(), config };
-    saveVolatileDraft(key, current);
-    saveDraft(key, { ...current, config: persistedConfig(config) });
-  });
   createEffect(() => { sourceKey(); setInspectionError(""); });
 
   createEffect(() => {
@@ -279,6 +282,7 @@ export default function NewApplication() {
       const services = compose() ? await inspectStack() : undefined;
       if (compose() && staleDomains().length) throw Error("Remove domains for services without an HTTP port");
       const inputs = snapshot();
+      const defaulted = withDefaultDomain(inputs);
       const commit = git() ? (services?.commit || detected()?.commit) : undefined;
       const result = await post<CreatePlan>("/plan", {
         name: name().trim() || suggestedName(), config: inputs, commit,
@@ -286,6 +290,9 @@ export default function NewApplication() {
       if (!disposed) {
         const requestKey = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
         setReview({ plan: result, inputs, commit, requestKey });
+        setReviewName(result.name);
+        setReviewDomain(reviewedDomain(result));
+        setDomainFollowsName(defaulted);
         go("review");
       }
       return true;
@@ -301,18 +308,41 @@ export default function NewApplication() {
       setError("");
     });
     if (!await plan()) throw Error(error() || "The service could not be prepared");
+    // The library form already showed the name, domains and settings, so it deploys straight away.
+    // A failed deploy leaves the review open with the error.
+    await deploy();
+  }
+  function reviewedInputs(approved: { plan: CreatePlan; inputs: StaticConfig }) {
+    const hostname = reviewDomain().trim().toLowerCase();
+    if (hostname === reviewedDomain(approved.plan)) return undefined;
+    const inputs: StaticConfig = JSON.parse(JSON.stringify(approved.inputs));
+    if (compose()) {
+      const service = routedService() ?? approved.plan.config.domains?.[0]?.service;
+      const others = (inputs.domains ?? []).filter(d => d.service !== service);
+      inputs.domains = hostname && service ? [...others, { id: "service-" + service, hostname, service, https: secureDomain(hostname), primary: true, redirect: false }] : others;
+    } else {
+      inputs.domain = hostname;
+      inputs.https = !!hostname && secureDomain(hostname);
+    }
+    return inputs;
   }
   async function deploy() {
-    const approved = review();
+    let approved = review();
     if (!approved || pending()) return;
     setPending(true); setError("");
     try {
+      const nextName = reviewName().trim() || approved.plan.name;
+      const nextInputs = reviewedInputs(approved);
+      if (nextName !== approved.plan.name || nextInputs) {
+        const inputs = nextInputs ?? approved.inputs;
+        const plan = await post<CreatePlan>("/plan", { name: nextName, config: inputs, commit: approved.commit }, auth.session()?.csrfToken);
+        approved = { ...approved, plan, inputs };
+        setReview(approved);
+      }
       const d = await post<Deployment>("/applications", {
         id: approved.plan.applicationId, revision: approved.plan.revision, name: approved.plan.name,
         config: approved.inputs, commit: approved.commit,
       }, auth.session()?.csrfToken, approved.requestKey);
-      clearDraft(key);
-      clearDraft("variables:" + auth.session()?.user?.id + ":new");
       navigate("/applications/" + d.applicationId + "?tab=deployments");
     } catch (e) { if (!disposed) setError((e as Error).message); }
     finally { if (!disposed) setPending(false); }
@@ -450,7 +480,7 @@ export default function NewApplication() {
             <Show when={!worker()}>
               <div class="form-fields creation-inputs">
                 <Show when={method() !== "static"}><PortField config={config} change={change} /></Show>
-                <DomainFields config={config} change={change} acme={acme()} autoHTTPS={proxy.data?.autoHTTPS} />
+                <DomainFields config={config} change={change} acme={acme()} autoHTTPS={proxy.data?.autoHTTPS} placeholder={defaultDomain(name().trim() || suggestedName())} />
               </div>
             </Show>
             <BuildDetails config={config} change={change} method={method()} hints={detected()} essentials />
@@ -476,7 +506,7 @@ export default function NewApplication() {
               <Show when={stack()}>{result => <ServiceSummary services={result().services} routes={service =>
                 <Show when={service.port && !service.oneShot}>
                   <div class="service-route">
-                    <input class="input" aria-label={"Domain for " + service.name} placeholder="Add domain"
+                    <input class="input" aria-label={"Domain for " + service.name} placeholder={service.name === routedService() && !config.domains?.length ? defaultDomain(name().trim() || suggestedName()) || "Add domain" : "Add domain"}
                       value={config.domains?.find(d => d.service === service.name)?.hostname ?? ""}
                       onInput={e => serviceDomain(service.name, e.currentTarget.value)} />
                     <Show when={config.domains?.some(d => d.service === service.name && !d.hostname.toLowerCase().endsWith(".localhost"))}>
@@ -518,10 +548,10 @@ export default function NewApplication() {
       </form>
     </Show>
     <Show when={!manual() && step() === "review" && review()}>{approved => <>
-      <h2 ref={heading} tabindex="-1" classList={{ "sr-only": !!config.database }}>{config.database ? "Review database" : "Ready to deploy"}</h2>
+      <h2 ref={heading} tabindex="-1" class="sr-only">{config.database ? "Review database" : "Ready to deploy"}</h2>
       <section class="deployment-proposal" classList={{ "database-proposal": !!config.database }} aria-label="Proposed deployment">
         <dl>
-          <ReviewFact label={config.database ? "Database" : "Application"}>{approved().plan.name}</ReviewFact>
+          <ReviewFact label="Name"><input class="input review-input" aria-label={config.database ? "Database name" : "Application name"} maxlength={80} required value={reviewName()} onInput={e => { setReviewName(e.currentTarget.value); if (domainFollowsName()) setReviewDomain(defaultDomain(e.currentTarget.value.trim() || approved().plan.name)); }} /></ReviewFact>
           <Show when={!config.database}>
             <Show when={config.catalogService} fallback={<ReviewFact label="Source">{git() ? repositoryLabel(config.repository) : local() ? "Local files" : source() === "image" ? config.image : inlineCompose() ? "Inline Compose" : "Inline Dockerfile"}<Show when={git()}><span>{config.branch || "Default branch"}</span></Show></ReviewFact>}>
               <ReviewFact label="Source"><span>Service Library</span><span class="mono">{config.catalogService}</span></ReviewFact>
@@ -529,16 +559,16 @@ export default function NewApplication() {
           </Show>
           <ReviewFact label={config.database ? "Engine" : "Build"}>{config.database ? ({postgresql:"PostgreSQL",mysql:"MySQL",mariadb:"MariaDB",mongodb:"MongoDB",clickhouse:"ClickHouse",redis:"Redis",sqlite:"SQLite"}[config.database.engine]) + " " + config.database.version : methodLabel(method())}</ReviewFact>
           <Show when={config.database}><ReviewFact label="Storage">Persistent volume</ReviewFact><ReviewFact label="Backups">{config.database!.engine === "clickhouse" || config.database!.engine === "sqlite" ? "Nightly volume" : "Nightly, 7 days"}</ReviewFact><ReviewFact label="Access">{config.database!.engine === "sqlite" ? "Local volume" : "Private network"}</ReviewFact><ReviewFact label="Credentials">{config.database!.engine === "sqlite" ? "None" : "Shown after deploy"}</ReviewFact></Show>
-          <Show when={!compose() && !config.database}><ReviewFact label="Domain">{worker() ? "Worker" : approved().plan.config.domain || "No public domain"}</ReviewFact></Show>
           <Show when={compose()}><ReviewFact label="Services"><For each={stack()?.services}>{s => <span>{s.name}</span>}</For></ReviewFact></Show>
-          <Show when={compose()}><ReviewFact label="Domain"><Show when={approved().plan.config.domains?.length} fallback={<><span>No public domain</span><Button small variant="ghost" onClick={enterManual}>Add domain</Button></>}><For each={approved().plan.config.domains}>{d => <span>{d.hostname}</span>}</For></Show></ReviewFact></Show>
+          <Show when={!config.database && (compose() ? !!routedService() : !worker())}><ReviewFact label="Domain"><input class="input review-input mono" aria-label="Domain" placeholder="No public domain" autocomplete="off" spellcheck={false} value={reviewDomain()} onInput={e => { setReviewDomain(e.currentTarget.value); setDomainFollowsName(false); }} /></ReviewFact></Show>
+          <Show when={worker() && !compose() && !config.database}><ReviewFact label="Runtime">Worker</ReviewFact></Show>
         </dl>
         <Show when={missing().length}><div class="proposal-variables"><span>{missing().length} detected {missing().length === 1 ? "variable" : "variables"} to review</span><Button small onClick={() => { addVariables(); enterManual(); }}>Review variables</Button></div></Show>
         <Button variant="ghost" onClick={enterManual}>{config.database ? "Advanced settings" : "Configure manually"}<Icon name="chevron" /></Button>
       </section>
       <div class="form-actions creation-actions">
         <Button variant="ghost" icon="back" disabled={pending()} onClick={() => go("source")}>Back</Button>
-        <Button variant="primary" disabled={pending()} onClick={() => void deploy()}>{pending() ? "Creating application" : "Deploy"}</Button>
+        <Button variant="primary" disabled={pending() || !reviewName().trim()} onClick={() => void deploy()}>{pending() ? "Creating application" : "Deploy"}</Button>
       </div>
     </>}</Show>
     <Show when={manual() && step() === "review" && review()}>{approved => <>
@@ -603,6 +633,6 @@ export default function NewApplication() {
         <Button variant="primary" disabled={pending()} onClick={() => void deploy()}>{pending() ? "Creating application" : "Deploy"}</Button>
       </div>
     </>}</Show>
-    <ServiceLibrary open={libraryOpen()} close={() => setLibraryOpen(false)} use={useLibrary} acme={acme()} />
+    <ServiceLibrary open={libraryOpen()} close={() => setLibraryOpen(false)} use={useLibrary} acme={acme()} domainSuffix={proxy.data?.appDomainSuffix} secureDefault={!!proxy.data?.autoHTTPS && acme()} />
   </div>;
 }
