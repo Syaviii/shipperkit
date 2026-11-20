@@ -35,10 +35,21 @@ export function applicationState(app: import("./types").Application) {
   if (app.state === "running" && isStaticApplication(app)) return "serving";
   return app.state;
 }
+// Let's Encrypt needs a moment after a route goes live. Until the monitor sees a
+// trusted certificate, a recently deployed HTTPS domain is still issuing, which
+// is expected rather than an error.
+export function certificateIssuing(app: import("./types").Application, domain: import("./types").Domain | undefined, now: number) {
+  const latest = app.latestDeployment;
+  if (!domain?.https || !app.activeDeploymentId || app.desiredState === "stopped" || domain.hostname.endsWith(".localhost")) return false;
+  if (domain.verificationState && domain.verificationState !== "tls_pending") return false;
+  return !!latest && latest.state === "succeeded" && now - (latest.finishedAt || latest.createdAt) < 600;
+}
 export function methodLabel(app: import("./types").Application) {
   if (app.config?.database) return ({ postgresql: "PostgreSQL", mysql: "MySQL", mariadb: "MariaDB", mongodb: "MongoDB", clickhouse: "ClickHouse", redis: "Redis", sqlite: "SQLite" }[app.config.database.engine]) + " " + app.config.database.version;
   const methods: Record<string, string> = { image:"Container image",inline:"Dockerfile",static: "Static site", compose: "Compose", dockerfile: "Dockerfile", railpack: "Railpack" };
-  return methods[app.method] ?? methods[app.latestDeployment?.resolvedMethod ?? ""] ?? (app.method === "auto" ? "Automatic" : app.containers.some(c => c.project) ? "Compose" : "Docker");
+  // The serving release names the method; the latest operation may be a stop or
+  // a domain change that resolved nothing.
+  return methods[app.method] ?? methods[app.activeMethod ?? ""] ?? methods[app.latestDeployment?.resolvedMethod ?? ""] ?? (app.method === "auto" ? "Automatic" : app.containers.some(c => c.project) ? "Compose" : "Docker");
 }
 export function deploymentLabel(d: import("./types").Deployment) { if(d.state==="cloning"&&d.config.localSource)return "Loading files";return d.state !== "succeeded" ? statusLabel(d.state) : ({ rollback: "Rolled back", deploy: "Deployed", domains: "Domains updated", start: "Started", stop: "Stopped", restart: "Restarted", delete: "Deleted", apply: "Applied", task: "Task completed", service_start:"Service started",service_stop:"Service stopped",service_restart:"Service restarted" }[d.operation] ?? "Completed"); }
 const operatorTime = new Intl.DateTimeFormat(undefined, {
